@@ -58,10 +58,11 @@ The guided installer will:
    the right one for your node and points it at a virtual port:
    - **Companion** node → [meshcore-packet-capture](https://github.com/agessaman/meshcore-packet-capture)
    - **Repeater** node → [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt)
-6. Optionally install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)** —
-   it asks for the bot's name and location and gives it its own virtual port.
-7. Optionally add a **custom MQTT broker** for the observer — type the details in,
+6. Optionally add a **custom MQTT broker** for the observer — type the details in,
    or paste a complete broker block copied from another node.
+7. Optionally install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)** —
+   it asks for the bot's name and location and gives it its own virtual port.
+
 
 **Customizing the bot:** the installer only sets the bot's **name, location, and
 serial port**. Everything else — which channels it monitors, its commands, weather
