@@ -63,9 +63,10 @@ The guided installer will:
 7. Optionally add a **custom MQTT broker** for the observer — type the details in,
    or paste a complete broker block copied from another node.
 
-Everything is set up to start automatically on boot, and each program is wired to
-its own virtual port so nothing fights over the radio. Prefer to do it by hand?
-Follow the manual steps below.
+SerialMux, your observer, and your bot each run as a **systemd service that starts
+automatically on boot** (and restarts itself on failure), and each program is
+wired to its own virtual port so nothing fights over the radio. Prefer to do it
+by hand? Follow the manual steps below.
 
 ### Try it first (safe, no changes)
 
