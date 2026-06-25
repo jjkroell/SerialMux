@@ -40,7 +40,34 @@ behaves as if it has the radio all to itself:
 
 ---
 
-## Setup — step by step
+## Easy install (one command) — recommended
+
+If you just want it working, run this in a terminal and follow the prompts:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/install.sh | sudo bash
+```
+
+The guided installer will:
+
+1. Install everything it needs (git, Python, pyserial).
+2. **Scan your USB devices** and let you pick your radio from a list.
+3. Ask **how many virtual ports** you want (1–3).
+4. Set up SerialMux as a service, start it, and **confirm it's working**.
+5. Offer to set up your **observer** — if it's already installed it just repoints
+   it at a virtual port; otherwise it installs the right one for your node:
+   - **Companion** node → [meshcore-packet-capture](https://github.com/agessaman/meshcore-packet-capture)
+   - **Repeater** node → [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt)
+6. Offer to install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)**
+   and point it at a virtual port.
+7. Let you add a **custom MQTT broker** for the observer.
+
+Everything is set up to start automatically on boot. You can re-run the command
+any time to change things. Prefer to do it by hand? Follow the manual steps below.
+
+---
+
+## Setup — step by step (manual)
 
 ### 1. Install the tools
 
