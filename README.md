@@ -65,6 +65,16 @@ The guided installer will:
 Everything is set up to start automatically on boot. You can re-run the command
 any time to change things. Prefer to do it by hand? Follow the manual steps below.
 
+### Try it first (safe, no changes)
+
+Want to see exactly what it does before committing? Download it and run a **dry
+run** — it makes no system changes, needs no `sudo`, invents a fake radio, and
+even runs SerialMux against it in a throwaway sandbox under `~/serialmux-demo`:
+
+```bash
+git clone https://github.com/jjkroell/SerialMux && bash SerialMux/install.sh --dry-run
+```
+
 ---
 
 ## Setup — step by step (manual)
