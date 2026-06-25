@@ -63,6 +63,21 @@ The guided installer will:
 7. Optionally add a **custom MQTT broker** for the observer — type the details in,
    or paste a complete broker block copied from another node.
 
+**Customizing the bot:** the installer only sets the bot's **name, location, and
+serial port**. Everything else — which channels it monitors, its commands, weather
+region, and so on — keeps the bot's defaults and is up to you. The bot's config
+file lives at **`/opt/meshcore-bot/config.ini`**. To change anything:
+
+```bash
+sudo nano /opt/meshcore-bot/config.ini      # edit the bot's settings
+sudo systemctl restart meshcore-bot         # apply your changes
+```
+
+(If it isn't there, run `systemctl show -p WorkingDirectory meshcore-bot` to see
+where the bot runs from.) The bot's own
+[configuration guide](https://github.com/agessaman/meshcore-bot/blob/main/docs/configuration.md)
+lists every available option.
+
 SerialMux, your observer, and your bot each run as a **systemd service that starts
 automatically on boot** (and restarts itself on failure), and each program is
 wired to its own virtual port so nothing fights over the radio. Prefer to do it
