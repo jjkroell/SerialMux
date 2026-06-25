@@ -328,6 +328,25 @@ run_upstream() {  # run_upstream "label" "command..."   (mocked in dry-run)
     if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run the official installer: $1"; else eval "$2" </dev/tty || warn "Upstream installer reported an issue — review its output above."; fi
 }
 
+# --- Reserve ports already claimed by an existing observer or bot, so a newly
+#     added program never lands on a port that's already in use (works in either
+#     order: observer-then-bot or bot-then-observer). ---
+BOT_CFG=""; BOT_EXISTING_VP=""
+for d in "$SYSROOT/opt/meshcore-bot" "$SYSROOT/opt/meshcore-bot-src"; do
+    [ -f "$d/config.ini" ] && { BOT_CFG="$d/config.ini"; break; }
+done
+if [ -n "$BOT_CFG" ]; then
+    BOT_EXISTING_VP=$(grep -E '^serial_port' "$BOT_CFG" 2>/dev/null | grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" | head -1)
+    [ -n "$BOT_EXISTING_VP" ] && { vport_in_use "$BOT_EXISTING_VP" || USED_VPORTS+=("$BOT_EXISTING_VP"); }
+fi
+for d in "$MCTOMQTT_DIR" "$PKTCAP_DIR"; do
+    f="$d/config.d/zz-serialmux.toml"
+    if [ -f "$f" ]; then
+        vp=$(grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" "$f" 2>/dev/null | head -1)
+        [ -n "$vp" ] && { vport_in_use "$vp" || USED_VPORTS+=("$vp"); }
+    fi
+done
+
 # --- Observer ---
 if [ -d "$MCTOMQTT_DIR" ] || [ -d "$PKTCAP_DIR" ]; then
     [ -d "$MCTOMQTT_DIR" ] && { OBSERVER_KIND=repeater;  OBSERVER_CFGDIR=$MCTOMQTT_DIR; OBSERVER_SVC=mctomqtt; }
@@ -377,7 +396,10 @@ apply_bot_config() {  # $1 = path to config.ini — sets serial port + the basic
     [ -n "$BOT_LAT" ]  && sed -i -E "s|^bot_latitude *=.*|bot_latitude = $BOT_LAT|" "$1" || true
     [ -n "$BOT_LON" ]  && sed -i -E "s|^bot_longitude *=.*|bot_longitude = $BOT_LON|" "$1" || true
 }
-if ask_yn "Do you want to install the MeshCore bot (agessaman/meshcore-bot)?" n; then
+if [ -n "$BOT_EXISTING_VP" ]; then
+    BOT_VPORT="$BOT_EXISTING_VP"
+    info "Bot is already installed and using $BOT_VPORT — leaving it as-is."
+elif ask_yn "Do you want to install the MeshCore bot (agessaman/meshcore-bot)?" n; then
     BOT_SRC="$SYSROOT/opt/meshcore-bot-src"
     assign_vport; BOT_VPORT=$REPLY_VPORT
     info "The bot starts from sensible defaults; set the essentials now, and tweak"
