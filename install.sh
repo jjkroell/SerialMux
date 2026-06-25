@@ -39,9 +39,12 @@ prompt() {  # prompt VARNAME "Question" "default"
     printf -v "$__var" '%s' "$__ans"
 }
 
+qsep() { printf '\n    %s┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄%s\n' "$C" "$N"; }
+
 ask_yn() {  # ask_yn "Question" default(y/n) -> returns 0 for yes
     local __q=$1 __def=${2:-y} __ans __hint
     [ "$__def" = y ] && __hint="Y/n" || __hint="y/N"
+    qsep
     while true; do
         printf '    %s [%s]: ' "$__q" "$__hint"
         _read __ans
@@ -50,9 +53,19 @@ ask_yn() {  # ask_yn "Question" default(y/n) -> returns 0 for yes
     done
 }
 
+read_multiline() {  # sets REPLY_MULTI to pasted lines, terminated by a line: END
+    REPLY_MULTI=""; local __line __src=/dev/stdin
+    { true </dev/tty; } 2>/dev/null && __src=/dev/tty
+    while IFS= read -r __line; do
+        [ "$__line" = "END" ] && break
+        REPLY_MULTI+="$__line"$'\n'
+    done <"$__src"
+}
+
 menu() {  # menu "Prompt" item1 item2 ... -> sets REPLY_INDEX (1-based)
     local __q=$1; shift
     local __items=("$@") __i __ans
+    qsep
     printf '    %s\n' "$__q"
     for __i in "${!__items[@]}"; do printf '      %s) %s\n' "$((__i+1))" "${__items[$__i]}"; done
     while true; do
@@ -310,25 +323,37 @@ else
 fi
 
 # --- Bot ---
-BOT_VPORT=""
+BOT_VPORT=""; BOT_NAME=""; BOT_LAT=""; BOT_LON=""
+apply_bot_config() {  # $1 = path to config.ini — sets serial port + the basics
+    sed -i -E "s|^connection_type *=.*|connection_type = serial|; s|^serial_port *=.*|serial_port = $BOT_VPORT|" "$1"
+    [ -n "$BOT_NAME" ] && sed -i -E "s|^bot_name *=.*|bot_name = $BOT_NAME|" "$1" || true
+    [ -n "$BOT_LAT" ]  && sed -i -E "s|^bot_latitude *=.*|bot_latitude = $BOT_LAT|" "$1" || true
+    [ -n "$BOT_LON" ]  && sed -i -E "s|^bot_longitude *=.*|bot_longitude = $BOT_LON|" "$1" || true
+}
 if ask_yn "Do you want to install the MeshCore bot (agessaman/meshcore-bot)?" n; then
     BOT_SRC="$SYSROOT/opt/meshcore-bot-src"
     assign_vport; BOT_VPORT=$REPLY_VPORT
+    info "The bot starts from sensible defaults; set the essentials now, and tweak"
+    info "anything else (channels, commands, etc.) later in config.ini."
+    prompt BOT_NAME "Bot name (how it appears in the mesh)" "MeshCoreBot"
+    prompt BOT_LAT  "Bot latitude (decimal degrees, blank to skip)" ""
+    prompt BOT_LON  "Bot longitude (decimal degrees, blank to skip)" ""
     step "Installing the MeshCore bot"
     if [ "$DRYRUN" = 1 ]; then
         info "[dry-run] would clone agessaman/meshcore-bot and run ./install-service.sh"
-        mkdir -p "$BOT_SRC"; printf '[Connection]\nconnection_type = ble\nserial_port = /dev/ttyUSB0\n' > "$BOT_SRC/config.ini"
+        mkdir -p "$BOT_SRC"
+        printf '[Connection]\nconnection_type = ble\nserial_port = /dev/ttyUSB0\n\n[Bot]\nbot_name = MeshCoreBot\nbot_latitude = 40.7128\nbot_longitude = -74.0060\n' > "$BOT_SRC/config.ini"
     else
         if [ -d "$BOT_SRC/.git" ]; then git -C "$BOT_SRC" pull --ff-only -q || true; else git clone -q https://github.com/agessaman/meshcore-bot "$BOT_SRC"; fi
         [ -f "$BOT_SRC/config.ini" ] || cp "$BOT_SRC/config.ini.quickstart" "$BOT_SRC/config.ini"
     fi
-    sed -i -E "s|^connection_type *=.*|connection_type = serial|; s|^serial_port *=.*|serial_port = $BOT_VPORT|" "$BOT_SRC/config.ini"
-    ok "Bot will use $BOT_VPORT (edit $BOT_SRC/config.ini for bot name, location, etc.)"
-    if [ "$DRYRUN" = 1 ]; then info "[dry-run] bot [Connection] now:"; sed -n '1,3p' "$BOT_SRC/config.ini" | sed 's/^/        /'
+    apply_bot_config "$BOT_SRC/config.ini"
+    ok "Bot configured: name='$BOT_NAME', port=$BOT_VPORT (full settings in $BOT_SRC/config.ini)"
+    if [ "$DRYRUN" = 1 ]; then info "[dry-run] resulting config.ini:"; sed -n '1,8p' "$BOT_SRC/config.ini" | sed 's/^/        /'
     else ( cd "$BOT_SRC" && bash ./install-service.sh </dev/tty ) || warn "Bot service installer reported an issue."
          if [ -d /opt/meshcore-bot ] && [ "$(readlink -f /opt/meshcore-bot)" != "$(readlink -f "$BOT_SRC")" ]; then
              cp "$BOT_SRC/config.ini" /opt/meshcore-bot/config.ini 2>/dev/null || true
-             sed -i -E "s|^connection_type *=.*|connection_type = serial|; s|^serial_port *=.*|serial_port = $BOT_VPORT|" /opt/meshcore-bot/config.ini 2>/dev/null || true
+             apply_bot_config /opt/meshcore-bot/config.ini 2>/dev/null || true
          fi
          sctl restart meshcore-bot 2>/dev/null || true
     fi
@@ -337,26 +362,43 @@ fi
 # --- Custom broker for the observer ---
 if [ "$OBSERVER_KIND" != none ]; then
     if ask_yn "Do you want to add a custom MQTT broker for the observer?" n; then
-        prompt BK_NAME   "Broker name (a label)" "local"
-        prompt BK_SERVER "Broker hostname or IP" ""
-        prompt BK_PORT   "Broker port" "1883"
-        menu "Transport?" "tcp (plain MQTT, usually port 1883)" "websockets (usually port 443)"
-        [ "$REPLY_INDEX" = 1 ] && BK_TRANS=tcp || BK_TRANS=websockets
-        if ask_yn "Use TLS/SSL?" "$([ "$BK_TRANS" = websockets ] && echo y || echo n)"; then BK_TLS=true; else BK_TLS=false; fi
-        if ask_yn "Does the broker require a username/password?" n; then
-            prompt BK_USER "Username" ""; prompt BK_PASS "Password" ""; BK_AUTH=password
-        else BK_AUTH=none; fi
         userf="${OBSERVER_OVERRIDE:-$OBSERVER_CFGDIR/config.d/zz-serialmux.toml}"
-        {
-            echo; echo "[[broker]]"
-            echo "name = \"$BK_NAME\""; echo "enabled = true"; echo "server = \"$BK_SERVER\""
-            echo "port = $BK_PORT"; echo "transport = \"$BK_TRANS\""
-            echo "keepalive = 60"; echo "qos = 0"; echo "retain = true"
-            echo; echo "[broker.tls]"; echo "enabled = $BK_TLS"; echo "verify = true"
-            echo; echo "[broker.auth]"; echo "method = \"$BK_AUTH\""
-            [ "$BK_AUTH" = password ] && { echo "username = \"$BK_USER\""; echo "password = \"$BK_PASS\""; }
-        } >> "$userf"
-        ok "Added broker '$BK_NAME' ($BK_SERVER:$BK_PORT) to $userf"
+        menu "How would you like to add the broker?" \
+             "Enter the details step by step (guided)" \
+             "Paste a complete [[broker]] block (e.g. copied from another node)"
+        if [ "$REPLY_INDEX" = 2 ]; then
+            qsep
+            info "Paste your [[broker]] block below. When finished, type a line with"
+            info "just the word  END  and press Enter:"
+            read_multiline
+            printf '\n%s\n' "$REPLY_MULTI" >> "$userf"
+            BK_DESC="pasted block"
+        else
+            prompt BK_NAME   "Broker name (a label)" "local"
+            prompt BK_SERVER "Broker hostname or IP" ""
+            prompt BK_PORT   "Broker port" "1883"
+            menu "Transport?" "tcp (plain MQTT, usually port 1883)" "websockets (usually port 443)"
+            [ "$REPLY_INDEX" = 1 ] && BK_TRANS=tcp || BK_TRANS=websockets
+            if ask_yn "Use TLS/SSL?" "$([ "$BK_TRANS" = websockets ] && echo y || echo n)"; then BK_TLS=true; else BK_TLS=false; fi
+            if ask_yn "Does the broker require a username/password?" n; then
+                prompt BK_USER "Username" ""; prompt BK_PASS "Password" ""; BK_AUTH=password
+            else BK_AUTH=none; fi
+            {
+                echo; echo "[[broker]]"
+                echo "name = \"$BK_NAME\""; echo "enabled = true"; echo "server = \"$BK_SERVER\""
+                echo "port = $BK_PORT"; echo "transport = \"$BK_TRANS\""
+                echo "keepalive = 60"; echo "qos = 0"; echo "retain = true"
+                echo; echo "[broker.tls]"; echo "enabled = $BK_TLS"; echo "verify = true"
+                echo; echo "[broker.auth]"; echo "method = \"$BK_AUTH\""
+                [ "$BK_AUTH" = password ] && { echo "username = \"$BK_USER\""; echo "password = \"$BK_PASS\""; }
+            } >> "$userf"
+            BK_DESC="$BK_NAME ($BK_SERVER:$BK_PORT)"
+        fi
+        if python3 -c "import tomllib" 2>/dev/null && ! python3 -c "import tomllib;tomllib.load(open('$userf','rb'))" 2>/dev/null; then
+            warn "Broker added, but $userf may not be valid TOML — please double-check it."
+        else
+            ok "Added broker ($BK_DESC) to $userf"
+        fi
         sctl restart "$OBSERVER_SVC" 2>/dev/null || true
     fi
 fi
