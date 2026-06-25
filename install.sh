@@ -90,8 +90,9 @@ cleanup() { [ -n "$SM_PID" ] && kill "$SM_PID" 2>/dev/null || true; [ -n "$FAKER
 
 if [ "$DRYRUN" = 1 ]; then
     trap cleanup EXIT INT TERM
-    DEMO_ROOT="${SERIALMUX_DEMO_ROOT:-$HOME/serialmux-demo}"
-    rm -rf "$DEMO_ROOT"
+    # A unique throwaway sandbox per run, so concurrent dry-runs never collide
+    # (and there's no destructive rm of a fixed path). Override with SERIALMUX_DEMO_ROOT.
+    if [ -n "${SERIALMUX_DEMO_ROOT:-}" ]; then DEMO_ROOT="$SERIALMUX_DEMO_ROOT"; else DEMO_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/serialmux-demo.XXXXXX")"; fi
     mkdir -p "$DEMO_ROOT"/dev/serial/by-id "$DEMO_ROOT"/etc/systemd/system "$DEMO_ROOT"/opt
     SYSROOT="$DEMO_ROOT"
     BYID_DIR="$DEMO_ROOT/dev/serial/by-id"
@@ -420,9 +421,11 @@ if [ "$DRYRUN" = 1 ]; then
     echo
     [ -n "$OBSERVER_OVERRIDE" ] && [ -f "$OBSERVER_OVERRIDE" ] && { info "Observer override ($OBSERVER_OVERRIDE):"; sed 's/^/      /' "$OBSERVER_OVERRIDE"; echo; }
     if [ -e "${VPORT_BASE}0" ] && [ "$SM_SIMULATED" != 1 ]; then
-        info "SerialMux is live in the sandbox right now. Try it from another terminal:"
-        info "    screen ${VPORT_BASE}0    (you'll see the fake radio's 'FAKE-RADIO heartbeat')"
-        printf '\n    Press Enter to tear down the demo... '
+        info "SerialMux is live in the sandbox right now. Open another terminal and run"
+        info "one of these to watch the fake radio arrive on a virtual port (Ctrl+C to stop):"
+        info "    cat ${VPORT_BASE}0                    # works everywhere, nothing to install"
+        info "    screen ${VPORT_BASE}0 115200          # only if 'screen' is installed"
+        printf '\n    Press Enter here to tear down the demo... '
         _read _
     fi
     info "Sandbox left at $DEMO_ROOT (delete it any time: rm -rf $DEMO_ROOT)"

@@ -69,7 +69,7 @@ any time to change things. Prefer to do it by hand? Follow the manual steps belo
 
 Want to see exactly what it does before committing? Download it and run a **dry
 run** — it makes no system changes, needs no `sudo`, invents a fake radio, and
-even runs SerialMux against it in a throwaway sandbox under `~/serialmux-demo`:
+even runs SerialMux against it in a throwaway sandbox (it prints the path):
 
 ```bash
 git clone https://github.com/jjkroell/SerialMux && bash SerialMux/install.sh --dry-run
