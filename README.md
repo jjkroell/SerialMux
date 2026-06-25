@@ -54,16 +54,18 @@ The guided installer will:
 2. **Scan your USB devices** and let you pick your radio from a list.
 3. Ask **how many virtual ports** you want (1–3).
 4. Set up SerialMux as a service, start it, and **confirm it's working**.
-5. Offer to set up your **observer** — if it's already installed it just repoints
-   it at a virtual port; otherwise it installs the right one for your node:
+5. Set up your **observer** — leaves an already-connected one alone, or installs
+   the right one for your node and points it at a virtual port:
    - **Companion** node → [meshcore-packet-capture](https://github.com/agessaman/meshcore-packet-capture)
    - **Repeater** node → [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt)
-6. Offer to install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)**
-   and point it at a virtual port.
-7. Let you add a **custom MQTT broker** for the observer.
+6. Optionally install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)** —
+   it asks for the bot's name and location and gives it its own virtual port.
+7. Optionally add a **custom MQTT broker** for the observer — type the details in,
+   or paste a complete broker block copied from another node.
 
-Everything is set up to start automatically on boot. You can re-run the command
-any time to change things. Prefer to do it by hand? Follow the manual steps below.
+Everything is set up to start automatically on boot, and each program is wired to
+its own virtual port so nothing fights over the radio. Prefer to do it by hand?
+Follow the manual steps below.
 
 ### Try it first (safe, no changes)
 
@@ -78,9 +80,10 @@ git clone https://github.com/jjkroell/SerialMux && bash SerialMux/install.sh --d
 ### Adding or changing things later
 
 Re-run the installer any time — it's safe to run again. It detects your existing
-SerialMux setup and offers to keep it, leaves an already-connected observer
-alone, and gives a newly added program (say, a bot you didn't set up the first
-time) **its own virtual port** — automatically adding one if they're all taken:
+SerialMux setup and offers to keep it, leaves any already-connected program
+alone, and gives a newly added one **its own virtual port** (adding a port
+automatically if they're all taken). This works in **either order** — start with
+an observer and add a bot later, or start with a bot and add an observer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/install.sh | sudo bash
@@ -279,11 +282,25 @@ journalctl -u serialmux -f          # watch its log live (Ctrl+C to quit)
 
 ## Updating SerialMux
 
+If you used the one-command installer, just **run it again** — it keeps your
+existing radio and ports and lets you add or change programs:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/install.sh | sudo bash
+```
+
+For a manual install:
+
 ```bash
 cd ~/SerialMux
 git pull
 sudo systemctl restart serialmux   # if you set up the service
 ```
+
+> If `git pull` complains about local changes, that's because your `REAL_PORT` /
+> `VPORTS` edits live in `SerialMux.py`. Note them down, run `git stash`, `git pull`,
+> then put them back (or just use the one-command installer above, which preserves
+> them for you).
 
 ---
 
