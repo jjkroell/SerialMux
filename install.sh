@@ -388,6 +388,10 @@ else
     fi
 fi
 
+# Make sure the observer starts on boot (its installer normally enables it; do it
+# again to be certain — enabling an already-enabled service is a no-op).
+if [ "$OBSERVER_KIND" != none ]; then sctl enable "$OBSERVER_SVC" 2>/dev/null || true; fi
+
 # --- Bot ---
 BOT_VPORT=""; BOT_NAME=""; BOT_LAT=""; BOT_LON=""
 apply_bot_config() {  # $1 = path to config.ini — sets serial port + the basics
@@ -427,6 +431,9 @@ elif ask_yn "Do you want to install the MeshCore bot (agessaman/meshcore-bot)?" 
          sctl restart meshcore-bot 2>/dev/null || true
     fi
 fi
+
+# Make sure the bot starts on boot (idempotent).
+if [ -n "$BOT_VPORT" ]; then sctl enable meshcore-bot 2>/dev/null || true; fi
 
 # --- Custom broker for the observer ---
 if [ "$OBSERVER_KIND" != none ]; then
@@ -482,6 +489,8 @@ info "Radio (real device):  $REAL_PORT"
 info "Virtual ports:        $(ls -1 ${VPORT_BASE}* 2>/dev/null | tr '\n' ' ')"
 [ -n "$OBSERVER_VPORT" ] && info "Observer ($OBSERVER_KIND):  uses $OBSERVER_VPORT   [service: $OBSERVER_SVC]"
 [ -n "$BOT_VPORT" ]      && info "Bot:                  uses $BOT_VPORT   [service: meshcore-bot]"
+echo
+info "All of these run as systemd services and start automatically on boot."
 echo
 if [ "$DRYRUN" = 1 ]; then
     info "This was a DRY RUN. Generated config files (under $DEMO_ROOT):"
