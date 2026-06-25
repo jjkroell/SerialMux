@@ -107,21 +107,42 @@ SERVICE_FILE="$SYSROOT/etc/systemd/system/serialmux.service"
 MCTOMQTT_DIR="$SYSROOT/etc/mctomqtt"
 PKTCAP_DIR="$SYSROOT/etc/meshcore-packet-capture"
 SM_REPO=https://github.com/jjkroell/SerialMux
-NEXT_VPORT=0
 VPORT_COUNT=0
+VP_PYLIST=""
+declare -a USED_VPORTS=()
 
 aptget() { if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run: apt-get $*"; else apt-get "$@"; fi; }
 sctl()   { if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run: systemctl $*"; else systemctl "$@"; fi; }
 
-assign_vport() {  # sets REPLY_VPORT; call WITHOUT $() so the counter persists
-    local idx=$NEXT_VPORT
-    if [ "$idx" -ge "$VPORT_COUNT" ]; then
-        idx=$((VPORT_COUNT-1))
-        warn "More programs than virtual ports — reusing ${VPORT_BASE}$idx."
+rebuild_vp_pylist() { VP_PYLIST=""; local i; for i in $(seq 0 $((VPORT_COUNT-1))); do VP_PYLIST+="${VP_PYLIST:+, }'${VPORT_BASE}$i'"; done; }
+vport_in_use() { local v; [ "${#USED_VPORTS[@]}" -eq 0 ] && return 1; for v in "${USED_VPORTS[@]}"; do [ "$v" = "$1" ] && return 0; done; return 1; }
+
+# Grow a running SerialMux by one virtual port (used when a new program needs one
+# but every current port is already taken — e.g. adding a bot to an observer-only
+# setup that only had a single port).
+grow_serialmux() {
+    VPORT_COUNT=$((VPORT_COUNT+1)); rebuild_vp_pylist
+    sed -i "s|^VPORTS = .*|VPORTS = [$VP_PYLIST]|" "$SM_DIR/SerialMux.py"
+    if [ "$DRYRUN" = 1 ] && [ "${SM_SIMULATED:-0}" = 1 ]; then
+        ln -sf /dev/null "${VPORT_BASE}$((VPORT_COUNT-1))"
+    elif [ "$DRYRUN" = 1 ]; then
+        [ -n "$SM_PID" ] && kill "$SM_PID" 2>/dev/null || true; sleep 1
+        nohup python3 "$SM_DIR/SerialMux.py" >"$DEMO_ROOT/serialmux.log" 2>&1 & SM_PID=$!; sleep 2
+    else
+        sctl restart serialmux; sleep 2
     fi
-    REPLY_VPORT="${VPORT_BASE}$idx"
-    if [ "$NEXT_VPORT" -lt "$VPORT_COUNT" ]; then NEXT_VPORT=$((NEXT_VPORT+1)); fi
-    return 0
+    warn "Added an extra virtual port (${VPORT_BASE}$((VPORT_COUNT-1))) so each program gets its own."
+}
+
+# Hand out the next FREE virtual port; grow the muxer if they're all taken.
+assign_vport() {
+    local i v
+    for i in $(seq 0 $((VPORT_COUNT-1))); do
+        v="${VPORT_BASE}$i"
+        if ! vport_in_use "$v"; then REPLY_VPORT="$v"; USED_VPORTS+=("$v"); return 0; fi
+    done
+    grow_serialmux
+    v="${VPORT_BASE}$((VPORT_COUNT-1))"; REPLY_VPORT="$v"; USED_VPORTS+=("$v"); return 0
 }
 
 # Spin up a fake radio: a PTY whose slave is symlinked into the sandbox by-id
@@ -177,7 +198,8 @@ ok "Tools ready."
 step "Step 2 of 5 — Download SerialMux"
 # ===========================================================================
 if [ "$DRYRUN" = 1 ] && [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/SerialMux.py" ]; then
-    mkdir -p "$SM_DIR"; cp "$SCRIPT_DIR/SerialMux.py" "$SM_DIR/"
+    mkdir -p "$SM_DIR"
+    [ -f "$SM_DIR/SerialMux.py" ] || cp "$SCRIPT_DIR/SerialMux.py" "$SM_DIR/"  # don't clobber a kept config on re-run
     info "[dry-run] using local SerialMux.py"
 elif [ -d "$SM_DIR/.git" ]; then
     info "Updating existing copy at $SM_DIR..."; git -C "$SM_DIR" pull --ff-only -q || warn "Update failed; using existing copy."
@@ -190,37 +212,51 @@ ok "SerialMux is at $SM_DIR"
 # ===========================================================================
 step "Step 3 of 5 — Choose your radio and virtual ports"
 # ===========================================================================
-[ "$DRYRUN" = 1 ] && { info "[dry-run] creating a fake radio so you have something to pick..."; start_fake_radio; }
+[ "$DRYRUN" = 1 ] && { info "[dry-run] creating a fake radio so SerialMux has something to talk to..."; start_fake_radio; }
 
-info "Scanning for USB serial devices..."
-mapfile -t BYID < <(ls -1 "$BYID_DIR" 2>/dev/null || true)
-DEV_PATHS=(); DEV_LABELS=()
-if [ "${#BYID[@]}" -gt 0 ]; then
-    for name in "${BYID[@]}"; do
-        target=$(readlink -f "$BYID_DIR/$name" 2>/dev/null || echo "?")
-        DEV_PATHS+=("$BYID_DIR/$name"); DEV_LABELS+=("$name  (-> ${target##*/})")
-    done
-else
-    warn "Nothing under $BYID_DIR. Falling back to raw device names."
-    for d in /dev/ttyACM* /dev/ttyUSB*; do [ -e "$d" ] && { DEV_PATHS+=("$d"); DEV_LABELS+=("$d"); }; done
+# If SerialMux was already set up by a previous run, offer to keep it — so
+# re-running just to add/change a program doesn't make you redo the radio +
+# port selection. (The service file is only ever created by this installer.)
+SM_KEEP=0
+if [ -f "$SERVICE_FILE" ] && grep -q "^REAL_PORT = '" "$SM_DIR/SerialMux.py" 2>/dev/null; then
+    cur_port=$(sed -n "s/^REAL_PORT = '\(.*\)'.*/\1/p" "$SM_DIR/SerialMux.py" | head -1)
+    cur_count=$(grep -m1 '^VPORTS' "$SM_DIR/SerialMux.py" | grep -oE 'ttyV[0-9]+' | wc -l | tr -d ' ')
+    info "SerialMux is already set up here — radio: $cur_port ($cur_count virtual port(s))."
+    if ask_yn "Keep this SerialMux setup and just add or change programs?" y; then
+        REAL_PORT="$cur_port"; VPORT_COUNT="$cur_count"; rebuild_vp_pylist; SM_KEEP=1
+        ok "Keeping the existing SerialMux setup."
+    fi
 fi
-[ "${#DEV_PATHS[@]}" -gt 0 ] || die "No USB serial devices found. Plug in your radio (check the cable carries data) and re-run."
 
-menu "Which device is your MeshCore radio?" "${DEV_LABELS[@]}"
-REAL_PORT=${DEV_PATHS[$((REPLY_INDEX-1))]}
-ok "Selected: $REAL_PORT"
+if [ "$SM_KEEP" != 1 ]; then
+    info "Scanning for USB serial devices..."
+    mapfile -t BYID < <(ls -1 "$BYID_DIR" 2>/dev/null || true)
+    DEV_PATHS=(); DEV_LABELS=()
+    if [ "${#BYID[@]}" -gt 0 ]; then
+        for name in "${BYID[@]}"; do
+            target=$(readlink -f "$BYID_DIR/$name" 2>/dev/null || echo "?")
+            DEV_PATHS+=("$BYID_DIR/$name"); DEV_LABELS+=("$name  (-> ${target##*/})")
+        done
+    else
+        warn "Nothing under $BYID_DIR. Falling back to raw device names."
+        for d in /dev/ttyACM* /dev/ttyUSB*; do [ -e "$d" ] && { DEV_PATHS+=("$d"); DEV_LABELS+=("$d"); }; done
+    fi
+    [ "${#DEV_PATHS[@]}" -gt 0 ] || die "No USB serial devices found. Plug in your radio (check the cable carries data) and re-run."
 
-menu "How many virtual ports do you need? (one per program that will use the radio)" \
-     "1 — a single program" "2 — e.g. an observer + a bot" "3 — observer + bot + spare"
-VPORT_COUNT=$REPLY_INDEX
-VP_PYLIST=""
-for i in $(seq 0 $((VPORT_COUNT-1))); do VP_PYLIST+="${VP_PYLIST:+, }'${VPORT_BASE}$i'"; done
-ok "Will create: $(echo "$VP_PYLIST" | tr -d "'")"
+    menu "Which device is your MeshCore radio?" "${DEV_LABELS[@]}"
+    REAL_PORT=${DEV_PATHS[$((REPLY_INDEX-1))]}
+    ok "Selected: $REAL_PORT"
 
-step "Writing SerialMux configuration"
-sed -i "s|^REAL_PORT = .*|REAL_PORT = '$REAL_PORT'|" "$SM_DIR/SerialMux.py"
-sed -i "s|^VPORTS = .*|VPORTS = [$VP_PYLIST]|" "$SM_DIR/SerialMux.py"
-ok "Set REAL_PORT and $VPORT_COUNT virtual port(s)."
+    menu "How many virtual ports do you need? (one per program that will use the radio)" \
+         "1 — a single program" "2 — e.g. an observer + a bot" "3 — observer + bot + spare"
+    VPORT_COUNT=$REPLY_INDEX; rebuild_vp_pylist
+    ok "Will create: $(echo "$VP_PYLIST" | tr -d "'")"
+
+    step "Writing SerialMux configuration"
+    sed -i "s|^REAL_PORT = .*|REAL_PORT = '$REAL_PORT'|" "$SM_DIR/SerialMux.py"
+    sed -i "s|^VPORTS = .*|VPORTS = [$VP_PYLIST]|" "$SM_DIR/SerialMux.py"
+    ok "Set REAL_PORT and $VPORT_COUNT virtual port(s)."
+fi
 
 # ===========================================================================
 step "Step 4 of 5 — Install SerialMux as a service and verify it"
@@ -296,12 +332,22 @@ run_upstream() {  # run_upstream "label" "command..."   (mocked in dry-run)
 if [ -d "$MCTOMQTT_DIR" ] || [ -d "$PKTCAP_DIR" ]; then
     [ -d "$MCTOMQTT_DIR" ] && { OBSERVER_KIND=repeater;  OBSERVER_CFGDIR=$MCTOMQTT_DIR; OBSERVER_SVC=mctomqtt; }
     [ -d "$PKTCAP_DIR" ]   && { OBSERVER_KIND=companion; OBSERVER_CFGDIR=$PKTCAP_DIR;   OBSERVER_SVC=meshcore-packet-capture; }
-    info "Detected an observer already installed: $OBSERVER_KIND"
-    if ask_yn "Repoint it at a SerialMux virtual port?" y; then
-        assign_vport; OBSERVER_VPORT=$REPLY_VPORT
-        configure_observer_serial
-        sctl restart "$OBSERVER_SVC" 2>/dev/null || warn "Restart $OBSERVER_SVC to apply."
-    else OBSERVER_KIND=none; fi
+    OBSERVER_OVERRIDE="$OBSERVER_CFGDIR/config.d/zz-serialmux.toml"
+    cur_vp=""
+    [ -f "$OBSERVER_OVERRIDE" ] && cur_vp=$(grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" "$OBSERVER_OVERRIDE" 2>/dev/null | head -1)
+    if [ -n "$cur_vp" ]; then
+        # Already wired to SerialMux — keep that port reserved so a new bot
+        # doesn't grab it, and leave the observer untouched.
+        OBSERVER_VPORT="$cur_vp"; vport_in_use "$cur_vp" || USED_VPORTS+=("$cur_vp")
+        info "Observer ($OBSERVER_KIND) is already using $cur_vp — leaving it as-is."
+    else
+        info "Detected an observer already installed ($OBSERVER_KIND), not yet using SerialMux."
+        if ask_yn "Repoint it at a SerialMux virtual port?" y; then
+            assign_vport; OBSERVER_VPORT=$REPLY_VPORT
+            configure_observer_serial
+            sctl restart "$OBSERVER_SVC" 2>/dev/null || warn "Restart $OBSERVER_SVC to apply."
+        else OBSERVER_KIND=none; fi
+    fi
 else
     if ask_yn "Do you want to install a MeshCore observer now?" y; then
         menu "What role is this node?" \

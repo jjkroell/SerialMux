@@ -75,6 +75,29 @@ even runs SerialMux against it in a throwaway sandbox (it prints the path):
 git clone https://github.com/jjkroell/SerialMux && bash SerialMux/install.sh --dry-run
 ```
 
+### Adding or changing things later
+
+Re-run the installer any time — it's safe to run again. It detects your existing
+SerialMux setup and offers to keep it, leaves an already-connected observer
+alone, and gives a newly added program (say, a bot you didn't set up the first
+time) **its own virtual port** — automatically adding one if they're all taken:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/install.sh | sudo bash
+```
+
+## Uninstalling
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/uninstall.sh | sudo bash
+```
+
+This removes SerialMux and its virtual ports, and reverts the observer's config
+(so it talks to its own configured port again — set that back to the real radio
+if you need to). It then *asks* whether to also fully uninstall the observer
+and/or the bot via their own uninstallers — say no to keep them. Preview it with
+`bash uninstall.sh --dry-run`.
+
 ---
 
 ## Setup — step by step (manual)
