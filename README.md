@@ -75,7 +75,7 @@ run** — it makes no system changes, needs no `sudo`, invents a fake radio, and
 even runs SerialMux against it in a throwaway sandbox (it prints the path):
 
 ```bash
-git clone https://github.com/jjkroell/SerialMux && bash SerialMux/install.sh --dry-run
+curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/install.sh | bash -s -- --dry-run
 ```
 
 ### Adding or changing things later

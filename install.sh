@@ -107,6 +107,7 @@ SERVICE_FILE="$SYSROOT/etc/systemd/system/serialmux.service"
 MCTOMQTT_DIR="$SYSROOT/etc/mctomqtt"
 PKTCAP_DIR="$SYSROOT/etc/meshcore-packet-capture"
 SM_REPO=https://github.com/jjkroell/SerialMux
+SM_RAW=https://raw.githubusercontent.com/jjkroell/SerialMux/main
 VPORT_COUNT=0
 VP_PYLIST=""
 declare -a USED_VPORTS=()
@@ -201,6 +202,11 @@ if [ "$DRYRUN" = 1 ] && [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/SerialMux.py" 
     mkdir -p "$SM_DIR"
     [ -f "$SM_DIR/SerialMux.py" ] || cp "$SCRIPT_DIR/SerialMux.py" "$SM_DIR/"  # don't clobber a kept config on re-run
     info "[dry-run] using local SerialMux.py"
+elif [ "$DRYRUN" = 1 ]; then
+    # Piped via curl with no local copy — fetch just SerialMux.py (no git needed).
+    mkdir -p "$SM_DIR"
+    [ -f "$SM_DIR/SerialMux.py" ] || curl -fsSL "$SM_RAW/SerialMux.py" -o "$SM_DIR/SerialMux.py"
+    info "[dry-run] downloaded SerialMux.py"
 elif [ -d "$SM_DIR/.git" ]; then
     info "Updating existing copy at $SM_DIR..."; git -C "$SM_DIR" pull --ff-only -q || warn "Update failed; using existing copy."
 else
