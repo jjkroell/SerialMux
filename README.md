@@ -5,6 +5,14 @@
 SerialMux lets multiple programs talk to a single serial device — like a MeshCore
 LoRa node plugged into a Raspberry Pi over USB — without fighting over it.
 
+> **Node firmware:** SerialMux itself is firmware-agnostic, but the MeshCore
+> programs it's designed to feed — the **bot** and the **observer** — both speak
+> the MeshCore **companion serial protocol**. Your node must be running
+> **Companion (USB serial) firmware**. Repeater and Room Server firmware do *not*
+> answer the companion protocol and will not work with the bot or observer
+> (you'll see `No response from meshcore node … Are you sure your node is a serial
+> companion?`).
+
 ## The problem this solves
 
 A USB serial device can normally only be opened by **one** program at a time. If
@@ -16,8 +24,8 @@ SerialMux fixes this. It opens the real radio **once**, then creates several
 behaves as if it has the radio all to itself:
 
 ```
-                       ┌──────────────┐   /dev/ttyV0 ──►  your bot
-   USB radio ──────►   │   SerialMux  │   /dev/ttyV1 ──►  your observer
+                       ┌──────────────┐   /dev/ttyV0 ──►  observer (packet-capture)
+   USB radio ──────►   │   SerialMux  │   /dev/ttyV1 ──►  your bot
  (one real port)  ◄──  │  (the muxer) │   /dev/ttyV2 ──►  (spare)
                        └──────────────┘
 ```
@@ -30,6 +38,7 @@ behaves as if it has the radio all to itself:
 ## What you'll need
 
 - A **Raspberry Pi** (or any Linux computer) with your radio plugged in over USB.
+- A node running MeshCore **Companion (USB serial)** firmware.
 - About 10 minutes. **No prior Linux experience required** — just copy and paste
   the commands below, one block at a time, into a terminal.
 
@@ -54,15 +63,16 @@ The guided installer will:
 2. **Scan your USB devices** and let you pick your radio from a list.
 3. Ask **how many virtual ports** you want (1–3).
 4. Set up SerialMux as a service, start it, and **confirm it's working**.
-5. Set up your **observer** — leaves an already-connected one alone, or installs
-   the right one for your node and points it at a virtual port:
-   - **Companion** node → [meshcore-packet-capture](https://github.com/agessaman/meshcore-packet-capture)
-   - **Repeater** node → [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt)
-6. Optionally add a **custom MQTT broker** for the observer — type the details in,
-   or paste a complete broker block copied from another node.
-7. Optionally install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)** —
+5. Set up the **observer** ([agessaman/meshcore-packet-capture](https://github.com/agessaman/meshcore-packet-capture)) —
+   leaves an already-connected one alone, or installs it and points it at a
+   virtual port.
+6. Optionally install the **[MeshCore bot](https://github.com/agessaman/meshcore-bot)** —
    it asks for the bot's name and location and gives it its own virtual port.
-
+7. Optionally add a **custom MQTT broker** for the observer — type the details in,
+   or paste a complete broker block copied from another node.
+8. **Patch the `meshcore` library** in the bot's and observer's virtualenvs so
+   they can run on a virtual port at all (see
+   [Running on a virtual port](#running-on-a-virtual-port) below for why).
 
 **Customizing the bot:** the installer only sets the bot's **name, location, and
 serial port**. Everything else — which channels it monitors, its commands, weather
@@ -79,7 +89,7 @@ where the bot runs from.) The bot's own
 [configuration guide](https://github.com/agessaman/meshcore-bot/blob/main/docs/configuration.md)
 lists every available option.
 
-SerialMux, your observer, and your bot each run as a **systemd service that starts
+SerialMux, the observer, and the bot each run as a **systemd service that starts
 automatically on boot** (and restarts itself on failure), and each program is
 wired to its own virtual port so nothing fights over the radio. Prefer to do it
 by hand? Follow the manual steps below.
@@ -157,14 +167,14 @@ ls -l /dev/serial/by-id/
 You'll see one or more lines like:
 
 ```
-usb-Seeed_Studio_XIAO_nRF52840_C8A73AB0B3AB137D-if00 -> ../../ttyACM0
+usb-Nologo_ProMicro_NRF52840_C8A73AB0B3AB137D-if00 -> ../../ttyACM0
 ```
 
 The important part is the long name starting with `usb-`. Your **full device path**
 is `/dev/serial/by-id/` + that name, e.g.:
 
 ```
-/dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_C8A73AB0B3AB137D-if00
+/dev/serial/by-id/usb-Nologo_ProMicro_NRF52840_C8A73AB0B3AB137D-if00
 ```
 
 > **Why this and not `/dev/ttyACM0`?** The `by-id` path always points to *your*
@@ -186,7 +196,7 @@ Near the top you'll see:
 
 ```python
 # --- Configuration ---
-REAL_PORT = '/dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_...-if00'
+REAL_PORT = '/dev/serial/by-id/usb-Nologo_ProMicro_NRF52840_...-if00'
 BAUD = 115200
 VPORTS = ['/dev/ttyV0', '/dev/ttyV1', '/dev/ttyV2']
 ```
@@ -228,15 +238,16 @@ radio. For a MeshCore setup:
 
 | Program       | Set its serial port to |
 | ------------- | ---------------------- |
-| Your **bot**      | `/dev/ttyV0`       |
-| Your **observer** | `/dev/ttyV1`       |
+| Your **observer** | `/dev/ttyV0`       |
+| Your **bot**      | `/dev/ttyV1`       |
 
 Keep the baud rate at `115200`. Your programs run as your normal user (they do
 **not** need sudo) — only SerialMux does.
 
-> **Tip:** if one of your programs only *reads* (like a passive observer), it's
-> best to keep it on its own port and let just one program send commands. If two
-> programs send commands at the exact same moment, their bytes can get interleaved.
+> **Important:** both the bot and the observer use the `meshcore` Python library,
+> which needs a one-line patch to run on a virtual port at all — see
+> [Running on a virtual port](#running-on-a-virtual-port). The one-command
+> installer does this for you; for a manual setup you must apply it yourself.
 
 ---
 
@@ -330,6 +341,9 @@ sudo systemctl restart serialmux   # if you set up the service
 | **`ModuleNotFoundError: No module named 'serial'`** | Run `sudo apt install -y python3-serial`. (Don't use `pip`.) |
 | **`/dev/serial/by-id/` is missing or empty** | Radio not detected — try a different USB cable (some are power-only) and confirm the radio has power. |
 | **Your bot/observer can't open `/dev/ttyV0`** | SerialMux must be running first — the virtual ports only exist while it runs. Check `sudo systemctl status serialmux`. |
+| **Bot/observer crash-loops with `[Errno 25] Inappropriate ioctl for device`** (traceback ends in `transport.serial.rts`) | The `meshcore` library toggles the RTS/DTR hardware lines on connect, which a virtual port (a PTY) can't do. The installer patches this automatically; if you installed by hand, see [Running on a virtual port](#running-on-a-virtual-port). |
+| **`No response from meshcore node … Are you sure your node is a serial companion?`** | The node isn't answering the companion protocol. Almost always the **wrong firmware** — the bot and observer need **Companion (USB serial)** firmware, not Repeater or Room Server. Reflash the node. |
+| **Bot/observer connects but replies/captures nothing** | Confirm the node is a Companion build, and — if you reflashed it — that its **channels** are set up again (a reflash wipes the node's identity and channel keys, so it can't decode messages on your old channels until you re-add them). |
 | **It worked, then stopped after a reboot/replug** | Use the `/dev/serial/by-id/...` path (step 3), not `/dev/ttyACM0`. And use the service so it auto-restarts. |
 
 ---
@@ -353,6 +367,65 @@ SerialMux is built to survive the failures that cause disconnects:
   comes back.
 - **A virtual port gets into a bad state:** it's torn down and recreated at the same
   path automatically.
+
+### Running on a virtual port
+
+Both the MeshCore **bot** and the **observer** use the `meshcore` Python library,
+which sets the **RTS/DTR** hardware modem-control lines the moment it connects. A
+real USB serial adapter supports that; a **virtual port is a PTY**, which does not
+— so the library raises `OSError: [Errno 25] Inappropriate ioctl for device` and
+the program exits (systemd then restart-loops it into a `start-limit-hit`).
+
+The one-command installer patches the library automatically — in **both** the bot's
+and the observer's virtualenvs — so they run fine on a `/dev/ttyV*` port. If you
+installed by hand, apply the same fix. It wraps the RTS/DTR assignments so an
+unsupported ioctl is harmless (change the `find` root to `/opt/meshcore-bot` for
+the bot, `/opt/meshcore-packet-capture` for the observer — or run it for both):
+
+```bash
+for root in /opt/meshcore-bot /opt/meshcore-packet-capture; do
+  SC="$(find "$root" -path '*/site-packages/meshcore/serial_cx.py' 2>/dev/null)"
+  [ -n "$SC" ] || continue
+  sudo cp "$SC" "$SC.bak"
+  sudo python3 - "$SC" <<'PY'
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+if 'serialmux-rts-patch' not in s:
+    s = re.sub(r'^([ \t]*)(transport\.serial\.(?:rts|dtr)\s*=.*)$',
+               r"\1try:  # serialmux-rts-patch\n\1    \2\n\1except OSError:\n\1    pass",
+               s, flags=re.M)
+    p.write_text(s)
+print("patched", sys.argv[1])
+PY
+done
+sudo systemctl restart meshcore-bot meshcore-packet-capture 2>/dev/null
+```
+
+> A `pip install -U` of the `meshcore` package overwrites the library and undoes
+> this — just re-run the SerialMux installer (or the snippet above) afterward.
+
+### Observer configuration
+
+The installer points the observer at a virtual port with a drop-in it owns,
+`/etc/meshcore-packet-capture/config.d/zz-serialmux.toml` (it sorts last, so it
+wins on load without touching your own config):
+
+```toml
+connection_type = "serial"
+serial_ports = "/dev/ttyV0"
+```
+
+The observer also publishes to an MQTT broker — that's configured separately (in
+its own `config.d/99-user.toml`), independent of the serial port above.
+
+### A note on sharing a companion node
+
+MeshCore's companion serial API is **request/response** and is happiest with a
+single command-issuing client. The bot (which sends commands and replies) plus the
+packet-capture observer (which is largely passive after its initial handshake)
+coexist well on one radio through SerialMux. Running **two** heavily
+command-issuing companion clients on the same node can interleave their traffic —
+if you need that, give the second one its own radio.
 
 ### Configuration reference
 
@@ -379,3 +452,6 @@ removes the virtual-port symlinks.
 - Linux (uses PTYs and symlinks)
 - Python 3
 - [pyserial](https://pypi.org/project/pyserial/) (`python3-serial` on Debian/Raspberry Pi OS)
+- A MeshCore node running **Companion (USB serial)** firmware
+</content>
+</invoke>

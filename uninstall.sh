@@ -30,7 +30,6 @@ run() { if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run: $*"; else "$@"; fi
 
 [ "$DRYRUN" = 1 ] || [ "$(id -u)" -eq 0 ] || die "Run with sudo:  curl -fsSL .../uninstall.sh | sudo bash"
 
-MCTOMQTT_DIR=/etc/mctomqtt
 PKTCAP_DIR=/etc/meshcore-packet-capture
 
 printf '%s\n' "$B$C"
@@ -55,35 +54,24 @@ run rm -rf /opt/serialmux
 for v in /dev/ttyV*; do [ -L "$v" ] && run rm -f "$v"; done 2>/dev/null || true
 ok "SerialMux service, files, and virtual ports removed."
 
-# 2. Revert observer overrides so the observer uses its own config again
+# 2. Revert the observer override so it uses its own config again
 step "Reverting observer config (removing the SerialMux override)"
-reverted=0
-for d in "$MCTOMQTT_DIR" "$PKTCAP_DIR"; do
-    f="$d/config.d/zz-serialmux.toml"
-    if [ -f "$f" ]; then
-        svc=mctomqtt; [ "$d" = "$PKTCAP_DIR" ] && svc=meshcore-packet-capture
-        run rm -f "$f"
-        run systemctl restart "$svc"
-        ok "Removed the SerialMux override from $d (restarted $svc)."
-        reverted=1
-    fi
-done
-[ "$reverted" = 0 ] && info "No SerialMux observer overrides found."
-[ "$reverted" = 1 ] && warn "Your observer now uses its OWN configured serial port again — open its config and set it back to the real radio (e.g. /dev/serial/by-id/...) if needed."
+f="$PKTCAP_DIR/config.d/zz-serialmux.toml"
+if [ -f "$f" ]; then
+    run rm -f "$f"
+    run systemctl restart meshcore-packet-capture
+    ok "Removed the SerialMux override from $PKTCAP_DIR (restarted meshcore-packet-capture)."
+    warn "The observer now uses its OWN configured serial port again — open its config and set it back to the real radio (e.g. /dev/serial/by-id/...) if needed."
+else
+    info "No SerialMux observer override found."
+fi
 
 # 3. Optionally remove the observer entirely (via its own uninstaller)
-if [ -d "$PKTCAP_DIR" ] || [ -d "$MCTOMQTT_DIR" ]; then
-    if ask_yn "Also completely uninstall the MeshCore observer?" n; then
-        if [ -d "$PKTCAP_DIR" ]; then
-            step "Uninstalling meshcore-packet-capture (companion)"
-            if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run the official uninstaller: agessaman/meshcore-packet-capture"
-            else bash <(curl -fsSL https://raw.githubusercontent.com/agessaman/meshcore-packet-capture/main/uninstall.sh) </dev/tty || warn "Observer uninstaller reported an issue."; fi
-        fi
-        if [ -d "$MCTOMQTT_DIR" ]; then
-            step "Uninstalling meshcoretomqtt (repeater)"
-            if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run the official uninstaller: Cisien/meshcoretomqtt"
-            else curl -fsSL https://raw.githubusercontent.com/Cisien/meshcoretomqtt/main/uninstall.sh | bash </dev/tty || warn "Observer uninstaller reported an issue."; fi
-        fi
+if [ -d "$PKTCAP_DIR" ]; then
+    if ask_yn "Also completely uninstall the MeshCore observer (meshcore-packet-capture)?" n; then
+        step "Uninstalling meshcore-packet-capture"
+        if [ "$DRYRUN" = 1 ]; then info "[dry-run] would run the official uninstaller: agessaman/meshcore-packet-capture"
+        else bash <(curl -fsSL https://raw.githubusercontent.com/agessaman/meshcore-packet-capture/main/uninstall.sh) </dev/tty || warn "Observer uninstaller reported an issue."; fi
     fi
 fi
 

@@ -202,10 +202,25 @@ def main():
         for v in vports:
             if v['alive'] and v['idle']:
                 try:
-                    os.read(v['master_fd'], 1)
-                    # Got data — client is connected
+                    # Read all buffered data, not just 1 byte. A client that
+                    # connects and immediately writes — e.g. the MeshCore
+                    # companion handshake — must not lose its first bytes, or
+                    # the frame is corrupted and the node never replies.
+                    data = os.read(v['master_fd'], 4096)
                     v['idle'] = False
                     log.info(f"Client connected to {v['path']}")
+                    if data:
+                        bytes_to_device += len(data)
+                        log.debug(f"{v['path']} -> device (on connect): {len(data)} bytes")
+                        try:
+                            ser.write(data)
+                        except (serial.SerialException, OSError) as e:
+                            log.warning(f"Serial write failed: {e} — reconnecting")
+                            try:
+                                ser.close()
+                            except Exception:
+                                pass
+                            ser = open_serial(REAL_PORT, BAUD)
                 except OSError as e:
                     if e.errno == errno.EAGAIN:
                         # No data but no error — client is connected

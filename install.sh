@@ -3,8 +3,11 @@
 # SerialMux guided installer
 # --------------------------
 # Sets up SerialMux (share one USB radio between several programs) and, if you
-# want, a MeshCore observer and/or the MeshCore bot — wiring each to a virtual
-# port so they never fight over the real USB device.
+# want, the MeshCore observer (meshcore-packet-capture) and/or the MeshCore bot
+# — wiring each to a virtual port so they never fight over the real USB device.
+#
+# Both clients speak the MeshCore companion serial protocol, so the node must run
+# Companion (USB serial) firmware — Repeater / Room Server firmware won't work.
 #
 # Run it with:
 #   curl -fsSL https://raw.githubusercontent.com/jjkroell/SerialMux/main/install.sh | sudo bash
@@ -104,7 +107,6 @@ else
 fi
 SM_DIR="$SYSROOT/opt/serialmux"
 SERVICE_FILE="$SYSROOT/etc/systemd/system/serialmux.service"
-MCTOMQTT_DIR="$SYSROOT/etc/mctomqtt"
 PKTCAP_DIR="$SYSROOT/etc/meshcore-packet-capture"
 SM_REPO=https://github.com/jjkroell/SerialMux
 SM_RAW=https://raw.githubusercontent.com/jjkroell/SerialMux/main
@@ -183,6 +185,7 @@ cat <<'BANNER'
   |____/ \___|_|  |_|\__,_|_|_|  |_|\__,_/_/\_\
 
   Share one USB radio between a bot AND an observer.
+  (MeshCore Companion / USB-serial firmware — not Repeater/Room.)
 BANNER
 printf '%s\n' "$N"
 [ "$DRYRUN" = 1 ] && warn "DRY RUN — no root, no system changes. Everything goes under $DEMO_ROOT"
@@ -319,13 +322,12 @@ configure_observer_serial() {  # SerialMux-owned override that wins on load (sor
     OBSERVER_OVERRIDE="$OBSERVER_CFGDIR/config.d/zz-serialmux.toml"
     mkdir -p "$OBSERVER_CFGDIR/config.d"
     {
-        echo "# Managed by the SerialMux installer. Points the observer at a"
-        echo "# SerialMux virtual port. Loaded last (deep-merged), so it wins"
+        echo "# Managed by the SerialMux installer. Points meshcore-packet-capture"
+        echo "# at a SerialMux virtual port. Loaded last (deep-merged), so it wins"
         echo "# without touching your own config. Safe to delete if you stop SerialMux."
         echo
-        if [ "$OBSERVER_KIND" = companion ]; then echo "[capture]"; echo 'connection_type = "serial"'; echo; fi
-        echo "[serial]"
-        echo "ports = [\"$OBSERVER_VPORT\"]"
+        echo 'connection_type = "serial"'
+        echo "serial_ports = \"$OBSERVER_VPORT\""
     } > "$OBSERVER_OVERRIDE"
     ok "Pointed the observer at $OBSERVER_VPORT  ($OBSERVER_OVERRIDE)"
 }
@@ -345,18 +347,15 @@ if [ -n "$BOT_CFG" ]; then
     BOT_EXISTING_VP=$(grep -E '^serial_port' "$BOT_CFG" 2>/dev/null | grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" | head -1)
     [ -n "$BOT_EXISTING_VP" ] && { vport_in_use "$BOT_EXISTING_VP" || USED_VPORTS+=("$BOT_EXISTING_VP"); }
 fi
-for d in "$MCTOMQTT_DIR" "$PKTCAP_DIR"; do
-    f="$d/config.d/zz-serialmux.toml"
-    if [ -f "$f" ]; then
-        vp=$(grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" "$f" 2>/dev/null | head -1)
-        [ -n "$vp" ] && { vport_in_use "$vp" || USED_VPORTS+=("$vp"); }
-    fi
-done
+f="$PKTCAP_DIR/config.d/zz-serialmux.toml"
+if [ -f "$f" ]; then
+    vp=$(grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" "$f" 2>/dev/null | head -1)
+    [ -n "$vp" ] && { vport_in_use "$vp" || USED_VPORTS+=("$vp"); }
+fi
 
-# --- Observer ---
-if [ -d "$MCTOMQTT_DIR" ] || [ -d "$PKTCAP_DIR" ]; then
-    [ -d "$MCTOMQTT_DIR" ] && { OBSERVER_KIND=repeater;  OBSERVER_CFGDIR=$MCTOMQTT_DIR; OBSERVER_SVC=mctomqtt; }
-    [ -d "$PKTCAP_DIR" ]   && { OBSERVER_KIND=companion; OBSERVER_CFGDIR=$PKTCAP_DIR;   OBSERVER_SVC=meshcore-packet-capture; }
+# --- Observer (Companion firmware only: agessaman/meshcore-packet-capture) ---
+if [ -d "$PKTCAP_DIR" ]; then
+    OBSERVER_KIND=companion; OBSERVER_CFGDIR=$PKTCAP_DIR; OBSERVER_SVC=meshcore-packet-capture
     OBSERVER_OVERRIDE="$OBSERVER_CFGDIR/config.d/zz-serialmux.toml"
     cur_vp=""
     [ -f "$OBSERVER_OVERRIDE" ] && cur_vp=$(grep -oE "${VPORT_BASE}[0-9]+|/dev/ttyV[0-9]+" "$OBSERVER_OVERRIDE" 2>/dev/null | head -1)
@@ -364,9 +363,9 @@ if [ -d "$MCTOMQTT_DIR" ] || [ -d "$PKTCAP_DIR" ]; then
         # Already wired to SerialMux — keep that port reserved so a new bot
         # doesn't grab it, and leave the observer untouched.
         OBSERVER_VPORT="$cur_vp"; vport_in_use "$cur_vp" || USED_VPORTS+=("$cur_vp")
-        info "Observer ($OBSERVER_KIND) is already using $cur_vp — leaving it as-is."
+        info "Observer is already using $cur_vp — leaving it as-is."
     else
-        info "Detected an observer already installed ($OBSERVER_KIND), not yet using SerialMux."
+        info "Detected meshcore-packet-capture already installed, not yet using SerialMux."
         if ask_yn "Repoint it at a SerialMux virtual port?" y; then
             assign_vport; OBSERVER_VPORT=$REPLY_VPORT
             configure_observer_serial
@@ -374,19 +373,15 @@ if [ -d "$MCTOMQTT_DIR" ] || [ -d "$PKTCAP_DIR" ]; then
         else OBSERVER_KIND=none; fi
     fi
 else
-    if ask_yn "Do you want to install a MeshCore observer now?" y; then
-        menu "What role is this node?" \
-             "Companion — installs agessaman/meshcore-packet-capture" \
-             "Repeater  — installs Cisien/meshcoretomqtt"
-        if [ "$REPLY_INDEX" = 1 ]; then
-            OBSERVER_KIND=companion; OBSERVER_CFGDIR=$PKTCAP_DIR; OBSERVER_SVC=meshcore-packet-capture
-            step "Installing the companion observer (meshcore-packet-capture)"
-            run_upstream "meshcore-packet-capture" 'bash -c "$(curl -fsSL https://raw.githubusercontent.com/agessaman/meshcore-packet-capture/main/install.sh)"'
-        else
-            OBSERVER_KIND=repeater; OBSERVER_CFGDIR=$MCTOMQTT_DIR; OBSERVER_SVC=mctomqtt
-            step "Installing the repeater observer (meshcoretomqtt)"
-            run_upstream "meshcoretomqtt" 'curl -fsSL https://raw.githubusercontent.com/Cisien/meshcoretomqtt/main/install.sh | bash'
-        fi
+    info "The observer (meshcore-packet-capture) needs a node running MeshCore"
+    info "Companion (USB serial) firmware — not Repeater or Room Server."
+    if ask_yn "Do you want to install the MeshCore observer now?" y; then
+        OBSERVER_KIND=companion; OBSERVER_CFGDIR=$PKTCAP_DIR; OBSERVER_SVC=meshcore-packet-capture
+        step "Installing the companion observer (meshcore-packet-capture)"
+        warn "Its installer will ask about MQTT brokers. You can accept its defaults"
+        info "for now — this SerialMux installer offers a step to add a custom MQTT"
+        info "broker at the END, once the observer is wired up."
+        run_upstream "meshcore-packet-capture" 'bash -c "$(curl -fsSL https://raw.githubusercontent.com/agessaman/meshcore-packet-capture/main/install.sh)"'
         assign_vport; OBSERVER_VPORT=$REPLY_VPORT
         step "Wiring the observer to SerialMux"
         configure_observer_serial
@@ -440,6 +435,47 @@ fi
 
 # Make sure the bot starts on boot (idempotent).
 if [ -n "$BOT_VPORT" ]; then sctl enable meshcore-bot 2>/dev/null || true; fi
+
+# --- Make the meshcore library tolerate SerialMux's virtual (PTY) ports ---
+# The meshcore serial client sets transport.serial.rts/dtr the moment it
+# connects. On a real USB adapter that toggles a hardware line; on a PTY (which
+# is what our virtual ports are) it raises OSError [Errno 25] "Inappropriate
+# ioctl for device", so the client exits and systemd restart-loops it. Both the
+# bot and the packet-capture observer use this library, each in its own venv, so
+# patch every copy we find. Idempotent, and re-applied on every run so a
+# `pip install -U` can't quietly undo it.
+if [ "$DRYRUN" != 1 ]; then
+    py="$(command -v python3)"
+    patched_any=0
+    for root in /opt/meshcore-bot /opt/meshcore-packet-capture; do
+        [ -d "$root" ] || continue
+        while IFS= read -r scx; do
+        [ -f "$scx" ] || continue
+        grep -q 'serialmux-rts-patch' "$scx" && continue
+        "$py" - "$scx" <<'PY' && patched_any=1
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+if 'serialmux-rts-patch' in s:
+    sys.exit(1)
+def repl(m):
+    ind = m.group(1)
+    return (f"{ind}try:  # serialmux-rts-patch: PTYs can't do RTS/DTR ioctls\n"
+            f"{ind}    {m.group(2)}\n"
+            f"{ind}except OSError:\n"
+            f"{ind}    pass")
+s2 = re.sub(r'^([ \t]*)(transport\.serial\.(?:rts|dtr)\s*=.*)$', repl, s, flags=re.M)
+if s2 == s:
+    sys.exit(1)
+p.write_text(s2)
+PY
+        done < <(find "$root" -path '*/site-packages/meshcore/serial_cx.py' 2>/dev/null)
+    done
+    if [ "$patched_any" = 1 ]; then
+        ok "Patched the meshcore library so clients can run on virtual (PTY) ports."
+        sctl restart meshcore-bot 2>/dev/null || true
+        sctl restart meshcore-packet-capture 2>/dev/null || true
+    fi
+fi
 
 # --- Custom broker for the observer ---
 if [ "$OBSERVER_KIND" != none ]; then
